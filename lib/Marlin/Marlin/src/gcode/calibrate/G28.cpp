@@ -992,6 +992,7 @@ static RefineResult corexy_calibrate_homing_attempt(float xy_mm_s
 #if HAS_TRINAMIC && defined(XY_HOMING_MEASURE_SENS_MIN) && defined(XY_HOMING_MEASURE_CURRENT_MAX)
 static RefineResult corexy_homing_calibrated(uint16_t measure_current) {
   SERIAL_ECHOLNPAIR("homing calibration selected current:", measure_current);
+  config_store().xy_homing_measure_current.set(measure_current);
   return RefineResult::success;
 }
 #endif
