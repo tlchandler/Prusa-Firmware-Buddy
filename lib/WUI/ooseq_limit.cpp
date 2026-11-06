@@ -3,6 +3,11 @@
 #include <lwip/tcp.h>
 #include <lwip/priv/tcp_priv.h>
 
+// An inbound pcb that cannot hold even one full-MSS segment never keeps any
+// out-of-order data, so a single lost frame stalls an upload until the sender
+// resends everything after it.
+static_assert(ooseq_limit::INBOUND_PCB_BYTES >= TCP_MSS);
+
 // Intention behind the limits.
 //
 // We don't want to get into the situation where all our receive buffers are
@@ -26,10 +31,22 @@
 //
 // We give significantly more room to the Connect case.
 //
+// The exception is a connection carrying a PrusaLink upload. Only one
+// transfer (Link or Connect) runs at a time, the upload is what the user is
+// waiting on, and over Wi-Fi a single lost frame would otherwise force the
+// sender to resend the whole window. That connection gets the outbound budget
+// and all other connections (including Connect) get no ooseq room until it is
+// gone; they still work, they just rely on retransmits.
+//
 // Note that nothing from here is run or consulted for in-sequence packets at
 // all.
 
 namespace {
+
+bool is_priority(const struct tcp_pcb *pcb) {
+    const void *arg = ooseq_limit::get_priority_arg();
+    return arg != nullptr && pcb->callback_arg == arg;
+}
 
 // Well-known/server ports (0-1023, IANA range); our listeners (PrusaLink
 // HTTP on 80, future HTTPS, ...) live here, while outbound connections
@@ -45,6 +62,7 @@ struct OoseqUsage {
     uint32_t inbound_bytes = 0;
     uint16_t all_segs = 0;
     uint16_t inbound_segs = 0;
+    bool priority_present = false;
 };
 
 // Sums ooseq usage of every active pcb except `exclude`. Called from
@@ -55,6 +73,9 @@ OoseqUsage other_pcbs_usage(const struct tcp_pcb *exclude) {
     for (const struct tcp_pcb *pcb = tcp_active_pcbs; pcb != nullptr; pcb = pcb->next) {
         if (pcb == exclude) {
             continue;
+        }
+        if (is_priority(pcb)) {
+            usage.priority_present = true;
         }
         const bool inbound = is_inbound(pcb);
         for (const struct tcp_seg *seg = pcb->ooseq; seg != nullptr; seg = seg->next) {
@@ -76,11 +97,23 @@ extern "C" {
 
 uint32_t buddy_ooseq_bytes_limit(const struct tcp_pcb *pcb) {
     const OoseqUsage usage = other_pcbs_usage(pcb);
+    if (is_priority(pcb)) {
+        return ooseq_limit::compute_priority_bytes_limit(usage.all_bytes);
+    }
+    if (usage.priority_present) {
+        return 0;
+    }
     return ooseq_limit::compute_bytes_limit(is_inbound(pcb), usage.all_bytes, usage.inbound_bytes);
 }
 
 uint16_t buddy_ooseq_pbufs_limit(const struct tcp_pcb *pcb) {
     const OoseqUsage usage = other_pcbs_usage(pcb);
+    if (is_priority(pcb)) {
+        return ooseq_limit::compute_priority_segs_limit(usage.all_segs);
+    }
+    if (usage.priority_present) {
+        return 0;
+    }
     return ooseq_limit::compute_segs_limit(is_inbound(pcb), usage.all_segs, usage.inbound_segs);
 }
 

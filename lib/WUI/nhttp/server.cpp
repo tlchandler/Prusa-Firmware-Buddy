@@ -1,6 +1,8 @@
 #include "server.h"
 #include "splice.h"
 
+#include <ooseq_limit.hpp>
+
 #include <algorithm>
 #include <lwip/sys.h>
 #include <lwip/tcpip.h>
@@ -399,6 +401,10 @@ Server::Server(const ServerDefs &defs)
         slot.server = this;
     }
     transfer_slot.server = this;
+    // The connection carrying an upload has its callback arg set to the
+    // transfer slot, so it gets out-of-order priority exactly while it
+    // uploads, with no bookkeeping on the many ways it can end.
+    ooseq_limit::set_priority_arg(&transfer_slot);
 }
 
 err_t Server::accept_wrap(void *me, struct altcp_pcb *new_conn, err_t err) {
