@@ -47,3 +47,30 @@ TEST_CASE("ooseq_limit outbound ignores inbound-only usage", "[ooseq_limit]") {
     CHECK(compute_bytes_limit(false, 0, INBOUND_SHARE_BYTES) == OUTBOUND_PCB_BYTES);
     CHECK(compute_segs_limit(false, 0, INBOUND_SHARE_SEGS) == OUTBOUND_PCB_SEGS);
 }
+
+TEST_CASE("ooseq_limit inbound pcb can hold at least one full segment", "[ooseq_limit]") {
+    // Anything smaller than a full segment makes lwIP drop the whole ooseq
+    // queue on the first out-of-order arrival.
+    CHECK(INBOUND_PCB_BYTES >= 1024);
+    CHECK(INBOUND_PCB_SEGS >= 1);
+}
+
+TEST_CASE("ooseq_limit priority pcb gets the outbound budget", "[ooseq_limit]") {
+    CHECK(compute_priority_bytes_limit(0) == OUTBOUND_PCB_BYTES);
+    CHECK(compute_priority_segs_limit(0) == OUTBOUND_PCB_SEGS);
+}
+
+TEST_CASE("ooseq_limit priority pcb still respects the global budget", "[ooseq_limit]") {
+    CHECK(compute_priority_bytes_limit(GLOBAL_BYTES - 1000) == 1000);
+    CHECK(compute_priority_segs_limit(GLOBAL_SEGS - 1) == 1);
+    CHECK(compute_priority_bytes_limit(GLOBAL_BYTES + 1) == 0);
+    CHECK(compute_priority_segs_limit(GLOBAL_SEGS + 1) == 0);
+}
+
+TEST_CASE("ooseq_limit priority arg round-trips", "[ooseq_limit]") {
+    int marker = 0;
+    set_priority_arg(&marker);
+    CHECK(get_priority_arg() == &marker);
+    set_priority_arg(nullptr);
+    CHECK(get_priority_arg() == nullptr);
+}
